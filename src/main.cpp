@@ -106,7 +106,6 @@ static void wlr_log_handler(wlr_log_importance level,
     wf::log::log_plain(wlevel, buffer);
 }
 
-#ifdef PRINT_TRACE
 static void signal_handler(int signal)
 {
     std::string error;
@@ -124,6 +123,16 @@ static void signal_handler(int signal)
         error = "Fatal error(SIGABRT)";
         break;
 
+      case SIGINT:
+        LOGI("Got SIGINT, shutting down");
+        wf::get_core().shutdown();
+        return;
+
+      case SIGTERM:
+        LOGI("Got SIGTERM, shutting down");
+        wf::get_core().shutdown();
+        return;
+
       default:
         error = "Unknown";
     }
@@ -132,8 +141,6 @@ static void signal_handler(int signal)
     wf::print_trace(false);
     std::_Exit(-1);
 }
-
-#endif
 
 static std::optional<std::string> choose_socket(wl_display *display)
 {
@@ -327,6 +334,9 @@ int main(int argc, char *argv[])
     signal(SIGFPE, signal_handler);
     signal(SIGABRT, signal_handler);
 #endif
+
+    signal(SIGINT, signal_handler);
+    signal(SIGTERM, signal_handler);
 
     std::set_terminate([] ()
     {
