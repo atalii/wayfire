@@ -69,20 +69,14 @@ class wayfire_input_method_v1_context
         this->text_input = text_input;
         this->current_im = current_im;
 
-        LOGI("Start ctx");
-
         context = wl_resource_create(wl_resource_get_client(current_im),
             &zwp_input_method_context_v1_interface, 1, 0);
         wl_resource_set_implementation(context, context_impl, this, handle_ctx_destruct_final);
         zwp_input_method_v1_send_activate(current_im, context);
-
-        LOGI("End ctx ", context);
     }
 
     void handle_text_input_commit()
     {
-        return;
-        LOGC(IM, "Commit serial=", ctx_serial);
         zwp_input_method_context_v1_send_content_type(context,
             text_input->current.content_type.hint, text_input->current.content_type.purpose);
         zwp_input_method_context_v1_send_surrounding_text(context,
@@ -95,15 +89,14 @@ class wayfire_input_method_v1_context
 
     void deactivate()
     {
-        return;
-        LOGI("Start deactivate");
         wl_resource_set_user_data(context, NULL);
         zwp_input_method_v1_send_deactivate(current_im, context);
         this->text_input = NULL;
 
-        wl_resource_destroy(active_grab_keyboard);
-        on_keyboard_key.disconnect();
-        LOGI("End deactivate");
+        if (active_grab_keyboard)
+        {
+            wl_resource_destroy(active_grab_keyboard);
+        }
     }
 
     void handle_im_key(uint32_t time, uint32_t key, uint32_t state)
@@ -137,6 +130,8 @@ class wayfire_input_method_v1_context
         auto self = static_cast<wayfire_input_method_v1_context*>(wl_resource_get_user_data(keyboard));
         self->active_grab_keyboard = NULL;
         self->last_sent_keymap_keyboard = NULL;
+        self->on_keyboard_key.disconnect();
+        self->on_keyboard_modifiers.disconnect();
     }
 
     wf::signal::connection_t<wf::input_event_signal<wlr_keyboard_key_event>> on_keyboard_key =
