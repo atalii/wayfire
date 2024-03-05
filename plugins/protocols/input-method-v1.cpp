@@ -2,6 +2,7 @@
 #include <unistd.h>
 #include <wayfire/plugin.hpp>
 #include <wayfire/core.hpp>
+#include <wayfire/unstable/wlr-text-input-v3-popup.hpp>
 #include "input-method-unstable-v1-protocol.h"
 #include "wayfire/option-wrapper.hpp"
 #include "wayfire/nonstd/wlroots-full.hpp"
@@ -56,9 +57,7 @@ class wayfire_im_v1_text_input_v3
 };
 
 static void handle_ctx_destruct_final(wl_resource *resource)
-{
-    LOGI("Destroy!");
-}
+{}
 
 class wayfire_input_method_v1_context
 {
@@ -331,7 +330,119 @@ static const struct zwp_input_method_context_v1_interface context_implementation
     .text_direction = handle_im_context_text_direction
 };
 
-class wayfire_input_method_v1 : public wf::plugin_interface_t
+
+void handle_input_panel_get_input_panel_surface(wl_client *client, wl_resource *resource,
+    uint32_t id, struct wl_resource *surface);
+static const struct zwp_input_panel_v1_interface panel_implementation = {
+    .get_input_panel_surface = handle_input_panel_get_input_panel_surface
+};
+
+void handle_input_panel_surface_set_toplevel(wl_client *client, wl_resource *resource,
+    struct wl_resource *output, uint32_t position);
+void handle_input_panel_surface_set_overlay_panel(wl_client *client, wl_resource *resource);
+
+static const struct zwp_input_panel_surface_v1_interface panel_surface_implementation = {
+    .set_toplevel = handle_input_panel_surface_set_toplevel,
+    .set_overlay_panel = handle_input_panel_surface_set_overlay_panel
+};
+
+class wayfire_input_method_v1_panel_surface
+{
+  public:
+    wayfire_input_method_v1_panel_surface(wl_client *client, uint32_t id,
+        wf::text_input_v3_im_relay_interface_t *relay, wlr_surface *surface)
+    {
+        LOGC(IM, "Input method panel surface created.");
+        resource = wl_resource_create(client, &zwp_input_panel_surface_v1_interface, 1, id);
+        wl_resource_set_implementation(resource, &panel_surface_implementation, this, handle_destroy);
+        this->surface = surface;
+        this->relay   = relay;
+
+        on_surface_commit.set_callback([=] (void*)
+        {
+            if (wlr_surface_has_buffer(surface) && !surface->mapped)
+            {
+                wlr_surface_map(surface);
+            } else if (!wlr_surface_has_buffer(surface) && surface->mapped)
+            {
+                wlr_surface_unmap(surface);
+            }
+        });
+        on_surface_commit.connect(&surface->events.commit);
+        // Initial commit, maybe already ok?
+        on_surface_commit.emit(NULL);
+
+        on_surface_destroy.set_callback([=] (void*)
+        {
+            if (surface->mapped)
+            {
+                wlr_surface_unmap(surface);
+            }
+
+            on_surface_destroy.disconnect();
+            on_surface_commit.disconnect();
+        });
+        on_surface_destroy.connect(&surface->events.destroy);
+    }
+
+    void set_overlay_panel()
+    {
+        LOGC(IM, "Input method panel surface set to overlay.");
+        popup = wf::text_input_v3_popup::create(relay, surface);
+        if (surface->mapped)
+        {
+            popup->map();
+        }
+    }
+
+    ~wayfire_input_method_v1_panel_surface()
+    {
+        if (popup && popup->is_mapped())
+        {
+            popup->unmap();
+        }
+    }
+
+  private:
+    wl_resource *resource;
+    wlr_surface *surface;
+    wf::text_input_v3_im_relay_interface_t *relay;
+    std::shared_ptr<wf::text_input_v3_popup> popup = nullptr;
+
+    wf::wl_listener_wrapper on_surface_commit;
+    wf::wl_listener_wrapper on_surface_destroy;
+
+    static void handle_destroy(wl_resource *destroy)
+    {
+        auto panel = (wayfire_input_method_v1_panel_surface*)wl_resource_get_user_data(destroy);
+        delete panel;
+    }
+};
+
+void handle_input_panel_get_input_panel_surface(wl_client *client, wl_resource *resource,
+    uint32_t id, struct wl_resource *surface)
+{
+    new wayfire_input_method_v1_panel_surface(client, id,
+        (wf::text_input_v3_im_relay_interface_t*)wl_resource_get_user_data(resource),
+        (wlr_surface*)wl_resource_get_user_data(surface));
+}
+
+void handle_input_panel_surface_set_toplevel(wl_client *client, wl_resource *resource,
+    wl_resource *output, uint32_t position)
+{
+    LOGE("The set toplevel request is not supported by the IM-v1 implementation!");
+}
+
+void handle_input_panel_surface_set_overlay_panel(wl_client *client, wl_resource *resource)
+{
+    auto panel = (wayfire_input_method_v1_panel_surface*)wl_resource_get_user_data(resource);
+    if (panel)
+    {
+        panel->set_overlay_panel();
+    }
+}
+
+class wayfire_input_method_v1 : public wf::plugin_interface_t, public wf::text_input_v3_im_relay_interface_t
 {
   public:
     void init() override
@@ -345,6 +456,8 @@ class wayfire_input_method_v1 : public wf::plugin_interface_t
         wf::get_core().protocols.text_input = wlr_text_input_manager_v3_create(wf::get_core().display);
         input_method_manager = wl_global_create(wf::get_core().display, &zwp_input_method_v1_interface, 1,
             this, handle_bind_im_v1);
+        input_panel_manager = wl_global_create(wf::get_core().display, &zwp_input_panel_v1_interface, 1,
+            this, handle_bind_im_panel_v1);
 
         on_text_input_v3_created.connect(&wf::get_core().protocols.text_input->events.text_input);
         on_text_input_v3_created.set_callback([&] (void *data)
@@ -474,10 +587,15 @@ class wayfire_input_method_v1 : public wf::plugin_interface_t
         current_im_context.reset();
     }
 
+    wlr_text_input_v3 *find_focused_text_input_v3() override
+    {
+        return current_im_context ? current_im_context->text_input : nullptr;
+    }
+
     // Implementation of input-method-v1
 
   private:
-    void bind_client(wl_client *client, uint32_t id)
+    void bind_input_method_manager(wl_client *client, uint32_t id)
     {
         wl_resource *resource = wl_resource_create(client, &zwp_input_method_v1_interface, 1, id);
         if (current_im)
@@ -494,7 +612,7 @@ class wayfire_input_method_v1 : public wf::plugin_interface_t
 
     static void handle_bind_im_v1(wl_client *client, void *data, uint32_t version, uint32_t id)
     {
-        ((wayfire_input_method_v1*)data)->bind_client(client, id);
+        ((wayfire_input_method_v1*)data)->bind_input_method_manager(client, id);
     }
 
     static void handle_destroy_im(wl_resource *resource)
@@ -504,9 +622,32 @@ class wayfire_input_method_v1 : public wf::plugin_interface_t
         ((wayfire_input_method_v1*)data)->current_im = nullptr;
     }
 
+    // input-method-panel impl
+
+  private:
+    void bind_input_method_panel(wl_client *client, uint32_t id)
+    {
+        LOGC(IM, "Input method panel interface bound");
+        wl_resource *resource = wl_resource_create(client, &zwp_input_panel_v1_interface, 1, id);
+        wl_resource_set_implementation(resource, &panel_implementation,
+            dynamic_cast<wf::text_input_v3_im_relay_interface_t*>(this), handle_destroy_im_panel);
+    }
+
+    static void handle_bind_im_panel_v1(wl_client *client, void *data, uint32_t version, uint32_t id)
+    {
+        ((wayfire_input_method_v1*)data)->bind_input_method_panel(client, id);
+    }
+
+    static void handle_destroy_im_panel(wl_resource *resource)
+    {
+        LOGC(IM, "Input method panel interface unbound");
+    }
+
   private:
     wf::option_wrapper_t<bool> enable_input_method_v2{"workarounds/enable_input_method_v2"};
     wl_global *input_method_manager = NULL;
+    wl_global *input_panel_manager  = NULL;
+
     wl_resource *current_im = NULL;
     wf::wl_listener_wrapper on_text_input_v3_created;
     wlr_surface *last_focus_surface = NULL;
