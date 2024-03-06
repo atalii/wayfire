@@ -622,7 +622,7 @@ class wayfire_input_method_v1 : public wf::plugin_interface_t, public wf::text_i
             return;
         }
 
-        if (im_text_inputs[input]->current_focus != last_focus_surface)
+        if (!last_focus_surface || (im_text_inputs[input]->current_focus != last_focus_surface))
         {
             LOGC(IM, "Ignoring enable request for text input ", input, ": stale request");
             return;
