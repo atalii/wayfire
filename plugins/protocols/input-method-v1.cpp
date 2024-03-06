@@ -608,6 +608,14 @@ class wayfire_input_method_v1 : public wf::plugin_interface_t, public wf::text_i
         LOGC(IM, "Input method bound");
         wl_resource_set_implementation(resource, NULL, this, handle_destroy_im);
         current_im = resource;
+
+        for (auto& [_, im] : im_text_inputs)
+        {
+            if (im->text_input->current_enabled)
+            {
+                handle_text_input_v3_enable(im->text_input);
+            }
+        }
     }
 
     static void handle_bind_im_v1(wl_client *client, void *data, uint32_t version, uint32_t id)
@@ -619,6 +627,7 @@ class wayfire_input_method_v1 : public wf::plugin_interface_t, public wf::text_i
     {
         LOGC(IM, "Input method unbound");
         auto data = wl_resource_get_user_data(resource);
+        ((wayfire_input_method_v1*)data)->reset_current_im_context();
         ((wayfire_input_method_v1*)data)->current_im = nullptr;
     }
 
