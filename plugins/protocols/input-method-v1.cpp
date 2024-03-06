@@ -484,17 +484,16 @@ class wayfire_input_method_v1 : public wf::plugin_interface_t, public wf::text_i
     wf::signal::connection_t<wf::keyboard_focus_changed_signal> on_keyboard_focus_changed =
         [=] (wf::keyboard_focus_changed_signal *ev)
     {
-        auto surf = wf::node_to_view(ev->new_focus);
-        if (surf && surf->get_wlr_surface())
+        auto view = wf::node_to_view(ev->new_focus);
+        auto surf = view ? view->get_wlr_surface() : nullptr;
+
+        if (last_focus_surface != surf)
         {
-            if (last_focus_surface != surf->get_wlr_surface())
+            reset_current_im_context();
+            last_focus_surface = surf;
+            for (auto& [_, im] : im_text_inputs)
             {
-                reset_current_im_context();
-                last_focus_surface = surf->get_wlr_surface();
-                for (auto& [_, im] : im_text_inputs)
-                {
-                    im->set_focus_surface(last_focus_surface);
-                }
+                im->set_focus_surface(last_focus_surface);
             }
         }
     };
