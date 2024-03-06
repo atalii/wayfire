@@ -1,4 +1,5 @@
 #include <fcntl.h>
+#include <set>
 #include <unistd.h>
 #include <wayfire/plugin.hpp>
 #include <wayfire/core.hpp>
@@ -9,6 +10,7 @@
 #include "wayfire/nonstd/wlroots.hpp"
 #include "wayfire/debug.hpp"
 #include "wayfire/signal-definitions.hpp"
+#include "wayfire/seat.hpp"
 
 class wayfire_im_v1_text_input_v3
 {
@@ -56,9 +58,6 @@ class wayfire_im_v1_text_input_v3
     wf::wl_listener_wrapper on_commit;
 };
 
-static void handle_ctx_destruct_final(wl_resource *resource)
-{}
-
 class wayfire_input_method_v1_context
 {
   public:
@@ -74,6 +73,15 @@ class wayfire_input_method_v1_context
         zwp_input_method_v1_send_activate(current_im, context);
     }
 
+    static void handle_ctx_destruct_final(wl_resource *resource)
+    {
+        auto context = static_cast<wayfire_input_method_v1_context*>(wl_resource_get_user_data(resource));
+        if (context)
+        {
+            context->deactivate(true);
+        }
+    }
+
     void handle_text_input_commit()
     {
         zwp_input_method_context_v1_send_content_type(context,
@@ -86,14 +94,52 @@ class wayfire_input_method_v1_context
         zwp_input_method_context_v1_send_commit_state(context, ctx_serial++);
     }
 
-    void deactivate()
+    void deactivate(bool im_killed = false)
     {
-        wl_resource_set_user_data(context, NULL);
-        zwp_input_method_v1_send_deactivate(current_im, context);
         this->text_input = NULL;
+        wl_resource_set_user_data(context, NULL);
+
+        if (im_killed)
+        {
+            // Remove keys which core still thinks are pressed down physically: they will be sent as release
+            // events to the client at a later point.
+            for (auto& hw_pressed : wf::get_core().seat->get_pressed_keys())
+            {
+                if (currently_pressed_keys_client.count(hw_pressed))
+                {
+                    currently_pressed_keys_client.erase(
+                        currently_pressed_keys_client.find(hw_pressed));
+                }
+            }
+
+            // For the other keys (where we potentially swallowed the release event, but the IM did not
+            // respond yet with a release), release those keys.
+            for (auto& key : currently_pressed_keys_client)
+            {
+                wlr_seat_keyboard_notify_key(this->text_input->seat, wf::get_current_time(),
+                    key, WL_KEYBOARD_KEY_STATE_RELEASED);
+            }
+
+            currently_pressed_keys_client.clear();
+            if (active_grab_keyboard)
+            {
+                wl_resource_set_user_data(active_grab_keyboard, NULL);
+            }
+
+            return;
+        }
+
+        zwp_input_method_v1_send_deactivate(current_im, context);
 
         if (active_grab_keyboard)
         {
+            for (auto& key : currently_pressed_keys_im)
+            {
+                wl_keyboard_send_key(active_grab_keyboard, vkbd_serial++, wf::get_current_time(),
+                    key, WL_KEYBOARD_KEY_STATE_RELEASED);
+            }
+
+            currently_pressed_keys_im.clear();
             wl_resource_destroy(active_grab_keyboard);
         }
     }
@@ -101,6 +147,7 @@ class wayfire_input_method_v1_context
     void handle_im_key(uint32_t time, uint32_t key, uint32_t state)
     {
         wlr_seat_keyboard_notify_key(this->text_input->seat, time, key, state);
+        update_pressed_keys(currently_pressed_keys_client, key, state);
     }
 
     void handle_im_modifiers(uint32_t serial, uint32_t mods_depressed, uint32_t mods_latched,
@@ -127,10 +174,27 @@ class wayfire_input_method_v1_context
     static void unbind_keyboard(wl_resource *keyboard)
     {
         auto self = static_cast<wayfire_input_method_v1_context*>(wl_resource_get_user_data(keyboard));
+        if (!self)
+        {
+            return;
+        }
+
         self->active_grab_keyboard = NULL;
         self->last_sent_keymap_keyboard = NULL;
         self->on_keyboard_key.disconnect();
         self->on_keyboard_modifiers.disconnect();
+        self->currently_pressed_keys_im.clear();
+    }
+
+    void update_pressed_keys(std::multiset<uint32_t>& set, uint32_t key, uint32_t state)
+    {
+        if (state == WL_KEYBOARD_KEY_STATE_PRESSED)
+        {
+            set.insert(key);
+        } else if (set.count(key))
+        {
+            set.erase(set.find(key));
+        }
     }
 
     wf::signal::connection_t<wf::pre_client_input_event_signal<wlr_keyboard_key_event>> on_keyboard_key =
@@ -142,6 +206,10 @@ class wayfire_input_method_v1_context
             ev->carried_out = true;
             wl_keyboard_send_key(active_grab_keyboard, vkbd_serial++, ev->event->time_msec,
                 ev->event->keycode, ev->event->state);
+
+            // Keep track of pressed keys so that we can release all of them at the end.
+            // Otherwise the IM gets stuck thinking that some modifiers are pressed, etc.
+            update_pressed_keys(currently_pressed_keys_im, ev->event->keycode, ev->event->state);
         }
     };
 
@@ -177,7 +245,15 @@ class wayfire_input_method_v1_context
                 WL_KEYBOARD_KEYMAP_FORMAT_NO_KEYMAP, fd, 0);
             close(fd);
         }
+
+        // Send new modifiers
+        wl_keyboard_send_modifiers(active_grab_keyboard, vkbd_serial++,
+            current_kbd->modifiers.depressed, current_kbd->modifiers.latched, current_kbd->modifiers.locked,
+            current_kbd->modifiers.group);
     }
+
+    std::multiset<uint32_t> currently_pressed_keys_im;
+    std::multiset<uint32_t> currently_pressed_keys_client;
 
     wlr_keyboard *last_sent_keymap_keyboard = NULL;
     wl_resource *active_grab_keyboard = NULL;
@@ -195,7 +271,6 @@ class wayfire_input_method_v1_context
 
 void handle_im_context_destroy(wl_client *client, wl_resource *resource)
 {
-    LOGI("Destroy!");
     wl_resource_destroy(resource);
 }
 
@@ -574,7 +649,7 @@ class wayfire_input_method_v1 : public wf::plugin_interface_t, public wf::text_i
         reset_current_im_context();
     }
 
-    void reset_current_im_context()
+    void reset_current_im_context(bool im_killed = false)
     {
         if (!current_im_context)
         {
@@ -582,7 +657,7 @@ class wayfire_input_method_v1 : public wf::plugin_interface_t, public wf::text_i
         }
 
         LOGC(IM, "Disabling IM context for ", current_im_context->text_input);
-        current_im_context->deactivate();
+        current_im_context->deactivate(im_killed);
         current_im_context.reset();
     }
 
@@ -626,7 +701,7 @@ class wayfire_input_method_v1 : public wf::plugin_interface_t, public wf::text_i
     {
         LOGC(IM, "Input method unbound");
         auto data = wl_resource_get_user_data(resource);
-        ((wayfire_input_method_v1*)data)->reset_current_im_context();
+        ((wayfire_input_method_v1*)data)->reset_current_im_context(true);
         ((wayfire_input_method_v1*)data)->current_im = nullptr;
     }
 
