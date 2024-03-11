@@ -51,6 +51,7 @@ wf::plugin_manager_t::~plugin_manager_t()
 
 void wf::plugin_manager_t::destroy_plugin(wf::loaded_plugin_t& p)
 {
+    LOGD("Unloading plugin ", p.so_path);
     p.instance->fini();
     p.instance.reset();
 
@@ -130,6 +131,7 @@ std::optional<wf::loaded_plugin_t> wf::plugin_manager_t::load_plugin_from_file(s
         loaded_plugin_t lp;
         lp.instance  = std::unique_ptr<wf::plugin_interface_t>(new_instance_func());
         lp.so_handle = handle;
+        lp.so_path   = path;
         return lp;
     }
 
