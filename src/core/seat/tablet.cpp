@@ -1,10 +1,8 @@
 #include <wayfire/bindings-repository.hpp>
 #include "tablet.hpp"
 #include "../core-impl.hpp"
-#include "../wm.hpp"
 #include "pointer.hpp"
 #include "cursor.hpp"
-#include "input-manager.hpp"
 #include "view/view-impl.hpp"
 #include "wayfire/core.hpp"
 #include "wayfire/debug.hpp"

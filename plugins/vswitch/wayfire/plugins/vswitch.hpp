@@ -20,7 +20,6 @@
 #include <wayfire/view-transform.hpp>
 #include <wayfire/nonstd/reverse.hpp>
 #include <cmath>
-#include <list>
 
 namespace wf
 {
@@ -347,7 +346,11 @@ class control_bindings_t
         bindings_win.set_callback(on_cfg_reload);
     }
 
-    virtual ~control_bindings_t() = default;
+    virtual ~control_bindings_t()
+    {
+        tear_down();
+    }
+
     control_bindings_t(const control_bindings_t &) = delete;
     control_bindings_t(control_bindings_t &&) = delete;
     control_bindings_t& operator =(const control_bindings_t&) = delete;

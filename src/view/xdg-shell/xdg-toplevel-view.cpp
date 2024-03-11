@@ -126,7 +126,7 @@ void wf::xdg_toplevel_view_base_t::ping()
 
 wlr_surface*wf::xdg_toplevel_view_base_t::get_keyboard_focus_surface()
 {
-    if (is_mapped())
+    if (xdg_toplevel && is_mapped())
     {
         return xdg_toplevel->base->surface;
     }
