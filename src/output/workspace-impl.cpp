@@ -333,9 +333,6 @@ struct workspace_set_t::impl
 
         if (output)
         {
-            wf::dassert((flags & OLD_OUTPUT_DESTROY) || output->wset().get() != self,
-                "Cannot attach active workspace set to another output!");
-
             output->disconnect(&output_geometry_changed);
             wf::scene::remove_child(wnode);
         }
@@ -702,6 +699,7 @@ std::vector<wayfire_toplevel_view> workspace_set_t::get_views(uint32_t flags, st
 
 void workspace_set_t::remove_view(wayfire_toplevel_view view)
 {
+    wf::print_trace(false);
     pimpl->remove_view(view);
 }
 

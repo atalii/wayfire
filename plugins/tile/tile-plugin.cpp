@@ -700,6 +700,11 @@ class tile_plugin_t : public wf::plugin_interface_t, wf::per_output_tracker_mixi
         {
             wset->erase_data<tile_workspace_set_data_t>();
         }
+
+        for (auto wo : wf::get_core().output_layout->get_outputs())
+        {
+            wo->erase_data<tile_output_plugin_t>();
+        }
     }
 
     void stop_controller(std::shared_ptr<wf::workspace_set_t> wset)

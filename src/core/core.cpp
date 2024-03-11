@@ -250,6 +250,28 @@ void wf::compositor_core_impl_t::shutdown()
     wl_display_terminate(wf::get_core().display);
 }
 
+void wf::compositor_core_impl_t::fini()
+{
+    LOGI("Unloading plugins...");
+    plugin_mgr.reset();
+    LOGI("Stopping clients...");
+    wl_display_destroy_clients(static_core->display);
+    LOGI("Freeing resources...");
+    default_wm.reset();
+    bindings.reset();
+    scene_root.reset();
+
+    // General core stuff
+    im_relay.reset();
+    seat.reset();
+    input.reset();
+    priv_output_layout_fini(output_layout.get());
+    output_layout.reset();
+    tx_manager.reset();
+    OpenGL::fini();
+    wl_display_destroy(static_core->display);
+}
+
 wf::compositor_state_t wf::compositor_core_impl_t::get_current_state()
 {
     return this->state;
@@ -544,6 +566,26 @@ wf::compositor_core_impl_t& wf::get_core_impl()
 {
     return wf::compositor_core_impl_t::get();
 }
+
+wf::compositor_core_impl_t& wf::compositor_core_impl_t::allocate_core()
+{
+    wf::dassert(!static_core, "Core already allocated");
+    static_core = std::make_unique<compositor_core_impl_t>();
+    return *static_core;
+}
+
+void wf::compositor_core_impl_t::deallocate_core()
+{
+    static_core->fini();
+    static_core.reset();
+}
+
+wf::compositor_core_impl_t& wf::compositor_core_impl_t::get()
+{
+    return *static_core;
+}
+
+std::unique_ptr<wf::compositor_core_impl_t> wf::compositor_core_impl_t::static_core;
 
 // TODO: move this to a better location
 wf_runtime_config runtime_config;

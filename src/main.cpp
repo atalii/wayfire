@@ -339,7 +339,7 @@ int main(int argc, char *argv[])
     /* First create display and initialize safe-list's event loop, so that
      * wf objects (which depend on safe-list) can work */
     auto display = wl_display_create();
-    auto& core   = wf::get_core_impl();
+    auto& core   = wf::compositor_core_impl_t::allocate_core();
 
     core.argc = argc;
     core.argv = argv;
@@ -420,9 +420,7 @@ int main(int argc, char *argv[])
     core.post_init();
 
     wl_display_run(core.display);
-
-    /* Teardown */
-    wl_display_destroy_clients(core.display);
-    wl_display_destroy(core.display);
+    wf::compositor_core_impl_t::deallocate_core();
+    LOGI("Shutdown successful!");
     return EXIT_SUCCESS;
 }
