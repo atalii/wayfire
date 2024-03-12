@@ -1504,17 +1504,16 @@ class wayfire_scale_global : public wf::plugin_interface_t,
     {
         if (auto toplevel = wf::toplevel_cast(ev->view))
         {
-            if (auto old_output = ev->output)
+            auto old_output = ev->output;
+            if (old_output && output_instance.count(old_output))
             {
                 this->output_instance[old_output]->handle_view_disappeared(toplevel);
             }
 
-            if (auto new_output = ev->view->get_output())
+            auto new_output = ev->view->get_output();
+            if (new_output && output_instance.count(new_output) && output_instance[new_output]->active)
             {
-                if (output_instance[new_output]->active)
-                {
-                    this->output_instance[ev->view->get_output()]->handle_new_view(toplevel);
-                }
+                this->output_instance[ev->view->get_output()]->handle_new_view(toplevel);
             }
         }
     };
